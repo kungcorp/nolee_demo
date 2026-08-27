@@ -1,4 +1,4 @@
-# Nolee Canvas Starter
+# Nolee Demo
 
 An interactive Nolee DevKit Ultra app showing how one focused experience can turn the device's
 physical controls and live sensor streams into product behavior. It intentionally uses ordinary
@@ -30,7 +30,7 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 adb shell pm grant ai.nolee.canvas android.permission.BODY_SENSORS
 ```
 
-Select `Nolee Canvas` as the primary app in Nolee Launcher before starting kiosk. The app declares
+Select `Nolee Demo` as the primary app in Nolee Launcher before starting kiosk. The app declares
 `CATEGORY_HOME`, so the power button retains the platform's expected kiosk sleep/home behavior.
 
 The source is deliberately compact: `MainActivity.kt` is the physical-control map,

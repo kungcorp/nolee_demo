@@ -119,6 +119,8 @@ fun CanvasScreen(
     rotationSector: Int,
     pulseGeneration: Int,
     sensors: SensorSnapshot,
+    thermal: LauncherThermal.Reading?,
+    budget: LauncherThermal.Budget,
     forceSensors: Boolean,
     ownerControls: Boolean,
     status: String,
@@ -155,12 +157,14 @@ fun CanvasScreen(
             heartRate = sensors.heartRate,
             rollX = sensors.rollX,
             rollY = sensors.rollY,
+            budget = budget,
         )
         Header(scene, sensors.heartRate)
         SceneWords(scene, sceneDirection)
         SensorPanel(
             visible = scene == 2 || forceSensors,
             snapshot = sensors,
+            thermal = thermal,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(bottom = SensorCardBottomInset),
@@ -296,7 +300,12 @@ private fun SceneWords(scene: Int, direction: Int) {
 private val SensorCardBottomInset = 76.dp
 
 @Composable
-private fun SensorPanel(visible: Boolean, snapshot: SensorSnapshot, modifier: Modifier = Modifier) {
+private fun SensorPanel(
+    visible: Boolean,
+    snapshot: SensorSnapshot,
+    thermal: LauncherThermal.Reading?,
+    modifier: Modifier = Modifier,
+) {
     // The card's nearest edge is the bottom curve, so that depth governs how far in its side sits.
     val endInset = safeContentInsetAt(SensorCardBottomInset, minimum = SensorCardEndInset)
     AnimatedVisibility(visible, modifier = modifier, enter = fadeIn(tween(320)), exit = fadeOut(tween(180))) {
@@ -343,6 +352,14 @@ private fun SensorPanel(visible: Boolean, snapshot: SensorSnapshot, modifier: Mo
             )
             Spacer(Modifier.height(SensorMetricGap))
             Metric("STEPS", snapshot.steps?.toString() ?: "waiting", null)
+            Spacer(Modifier.height(SensorMetricGap))
+            // Not a sensor the app owns — this one comes from the Launcher, and it is the number
+            // the animation throttles itself against.
+            Metric(
+                "CPU TEMP",
+                thermal?.cpu?.let { "%.0f".format(it) } ?: "no reading",
+                "°C".takeIf { thermal?.cpu != null },
+            )
         }
     }
 }
@@ -480,9 +497,6 @@ private data class Strand(
  */
 private const val CoreTexturePx = 384
 
-/** ~30 fps. The organic motion is slow enough that halving the redraw rate does not show. */
-private const val CoreFrameGapMs = 20L
-
 private const val TwoPi = 6.2831855f
 
 /** Texture edge, in orb radii. The atmosphere reaches 1.9, so the square side is twice that. */
@@ -560,6 +574,7 @@ private fun OrganicMatter(
     heartRate: Int?,
     rollX: Float,
     rollY: Float,
+    budget: LauncherThermal.Budget,
 ) {
     val strands = remember {
         val random = Random(73)
@@ -607,7 +622,7 @@ private fun OrganicMatter(
         val start = withFrameNanos { it }
         while (true) {
             withFrameNanos { now -> clock.floatValue = (now - start) / 1_000_000_000f }
-            kotlinx.coroutines.delay(CoreFrameGapMs)
+            kotlinx.coroutines.delay(budget.frameGapMs)
         }
     }
     val beatsPerMinute = (heartRate ?: 72).coerceIn(40, 180)
@@ -689,7 +704,8 @@ private fun OrganicMatter(
 
         // Back filaments disappear behind the body. Front filaments are drawn later over it,
         // which gives the form real visual depth instead of reading as a flat spiky badge.
-        ordered.filter { it.third < 0f }.forEach(::drawStrand)
+        val visible = budget.filaments
+        ordered.filter { it.third < 0f }.take(visible / 2).forEach(::drawStrand)
 
         // One blit for atmosphere and gas together. A slow counter-rotation keeps it alive.
         val texExtent = scale * CoreTextureExtent
@@ -704,7 +720,7 @@ private fun OrganicMatter(
 
         orderedTufts.forEach(::drawStrand)
 
-        ordered.filter { it.third >= 0f }.forEach(::drawStrand)
+        ordered.filter { it.third >= 0f }.take(visible / 2).forEach(::drawStrand)
 
         // The same texture again, barely there, so filaments sit inside the gas and not on top of it.
         rotate(spin * 9f, center) {

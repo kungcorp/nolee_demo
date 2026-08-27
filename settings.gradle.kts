@@ -14,6 +14,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "NoleeCanvasStarter"
+rootProject.name = "nolee_demo"
 include(":app")
 

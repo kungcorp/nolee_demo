@@ -27,7 +27,11 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -44,6 +48,8 @@ class MainActivity : ComponentActivity() {
     private var ownerControls by mutableStateOf(false)
     private var status by mutableStateOf("")
     private var bodyPermission by mutableStateOf(false)
+    private var budget by mutableStateOf(LauncherThermal.Budget.FULL)
+    private var thermal by mutableStateOf<LauncherThermal.Reading?>(null)
 
     private var sideDownAt = 0L
     private var sideHeld = false
@@ -113,6 +119,21 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(scene, forceSensors, bodyPermission) {
                     sensors.setBodySensors(bodyPermission && (scene == 2 || forceSensors))
                 }
+                // Watch our own heat and back off before the device gets uncomfortable. The
+                // thresholds are this app's, measured against this animation — the platform
+                // publishes numbers, not a verdict. See LauncherThermal.Budget.
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        val reading = withContext(Dispatchers.IO) { LauncherThermal.read(this@MainActivity) }
+                        thermal = reading
+                        val next = LauncherThermal.Budget.forCpu(reading?.cpu)
+                        if (next != budget) {
+                            budget = next
+                            status = "THERMAL · ${next.name} / ${reading?.cpu?.roundToInt()}°C CPU"
+                        }
+                        delay(LauncherThermal.POLL_SECONDS * 1000)
+                    }
+                }
                 CanvasScreen(
                     scene = scene,
                     sceneDirection = sceneDirection,
@@ -120,6 +141,8 @@ class MainActivity : ComponentActivity() {
                     rotationSector = rotationSector,
                     pulseGeneration = pulseGeneration,
                     sensors = snapshot,
+                    thermal = thermal,
+                    budget = budget,
                     forceSensors = forceSensors,
                     ownerControls = ownerControls,
                     status = status,
