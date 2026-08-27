@@ -1,0 +1,12 @@
+<resources>
+    <style name="Theme.NoleeCanvas" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorAccent">#4A343D</item>
+        <item name="android:navigationBarColor">#EADBD4</item>
+        <item name="android:statusBarColor">#EADBD4</item>
+    </style>
+</resources>
+
