@@ -47,13 +47,9 @@ a shaded ball. Nothing draws a hard edge or a specular rim, and there is no full
 inset, 112 px corner radius, 4 px content margin). Backgrounds and the living form still run to the
 edge; `safeContentInsetAt` is for text and controls that must stay readable.
 
-Shipped watches run at `font_scale 1.5`, so any dense panel sized in `dp` will overflow if its text
+The device ships at text size L (`font_scale 1.5`) and the owner can change it, so any dense panel sized in `dp` will overflow if its text
 scales freely. The sensor readings pin their own type through `instrumentSp`, which caps the
 accessibility scale at 1.0 for that column only - scene words, captions and owner controls still
 scale for the owner. Pin `lineHeight` alongside `fontSize` when doing this: `Text` otherwise keeps
 the theme's 24 sp line box, which is what inflated the readings to 335 dp and pushed them off the
 top of the lens.
-
-`tools/placement_jig.html` positions the readings against this geometry and emits the constants to
-paste back into `CanvasScreen.kt`. Its height model mirrors the composable, so keep the two in step
-if the metric type sizes change.

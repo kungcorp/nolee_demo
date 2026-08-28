@@ -9,7 +9,7 @@
 
     <application
         android:allowBackup="false"
-        android:icon="@drawable/ic_canvas"
+        android:icon="@drawable/ic_demo"
         android:label="@string/app_name"
         android:theme="@style/Theme.NoleeCanvas">
         <activity

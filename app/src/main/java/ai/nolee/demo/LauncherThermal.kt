@@ -40,6 +40,12 @@ object LauncherThermal {
      * animation on a DevKit Ultra: idle sat near 43 °C, this scene sustained ~50 °C, and the
      * pre-optimisation build reached ~58 °C. So [WARM] starts above what the tuned build produces
      * and [HOT] above what the untuned one did. Copy the shape, not the constants.
+     *
+     * ⚠️ **Decide whether your app is worn or docked before choosing limits.** This demo throttles
+     * on [Reading.cpu], because it is a showcase that runs on a bench as often as on a wrist and
+     * the concern is throughput, not comfort. An app worn against skin should gate on
+     * [Reading.skin] instead and be stricter, since nobody notices a warm die but everybody
+     * notices a warm case. An app that runs both ways wants two sets of limits, not one.
      */
     enum class Budget(val frameGapMs: Long, val filaments: Int) {
         /** Full detail, ~30 fps. */
@@ -63,6 +69,11 @@ object LauncherThermal {
         }
     }
 
-    /** Seconds between polls. Each read costs a root shell in the Launcher, so keep it lazy. */
-    const val POLL_SECONDS = 30L
+    /**
+     * Seconds between polls. Each read costs a privileged read inside the Launcher, so poll lazily
+     * while the number is only driving the throttle, and more often while it is on screen where a
+     * stale figure would be visible.
+     */
+    const val POLL_SECONDS_HIDDEN = 60L
+    const val POLL_SECONDS_VISIBLE = 15L
 }

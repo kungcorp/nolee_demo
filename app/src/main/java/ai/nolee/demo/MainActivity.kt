@@ -122,7 +122,15 @@ class MainActivity : ComponentActivity() {
                 // Watch our own heat and back off before the device gets uncomfortable. The
                 // thresholds are this app's, measured against this animation — the platform
                 // publishes numbers, not a verdict. See LauncherThermal.Budget.
-                LaunchedEffect(Unit) {
+                // Keyed on visibility, so arriving at the readings takes a fresh sample rather than
+                // showing whatever the throttle loop last happened to fetch.
+                val readingsVisible = scene == 2 || forceSensors
+                LaunchedEffect(readingsVisible) {
+                    val gap = if (readingsVisible) {
+                        LauncherThermal.POLL_SECONDS_VISIBLE
+                    } else {
+                        LauncherThermal.POLL_SECONDS_HIDDEN
+                    }
                     while (true) {
                         val reading = withContext(Dispatchers.IO) { LauncherThermal.read(this@MainActivity) }
                         thermal = reading
@@ -131,7 +139,7 @@ class MainActivity : ComponentActivity() {
                             budget = next
                             status = "THERMAL · ${next.name} / ${reading?.cpu?.roundToInt()}°C CPU"
                         }
-                        delay(LauncherThermal.POLL_SECONDS * 1000)
+                        delay(gap * 1000)
                     }
                 }
                 CanvasScreen(
