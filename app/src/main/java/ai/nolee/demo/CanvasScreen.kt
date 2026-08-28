@@ -1,4 +1,4 @@
-package ai.nolee.canvas
+package ai.nolee.demo
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility

@@ -1,4 +1,4 @@
-package ai.nolee.canvas
+package ai.nolee.demo
 
 import android.content.Context
 import android.net.Uri

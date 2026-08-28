@@ -1,4 +1,4 @@
-package ai.nolee.canvas
+package ai.nolee.demo
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext

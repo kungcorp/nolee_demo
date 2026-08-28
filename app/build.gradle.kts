@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "ai.nolee.canvas"
+    namespace = "ai.nolee.demo"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "ai.nolee.canvas"
+        applicationId = "ai.nolee.demo"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

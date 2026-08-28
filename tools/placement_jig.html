@@ -205,7 +205,7 @@
   stage.style.height=(PX_H*SCALE)+"px";
   document.getElementById("lens").style.borderRadius=(LENS_R*SCALE)+"px";
 
-  function cardHeight(){ return 15+9+4*34.5+3*S.gap; }
+  function cardHeight(){ return 15+9+5*34.5+4*S.gap; }
   function clamp(v,a,b){ return v<a?a:(v>b?b:v); }
 
   // The safe region is the inner rect grown by the corner radius, so containment is one distance test.
@@ -278,7 +278,7 @@
     });
 
     document.getElementById("cardFill").innerHTML='<div class="row">SENSORS</div>'+
-      ["HEART RHYTHM","OXYGEN EST.","BP ESTIMATE","STEPS"].map(function(n){
+      ["HEART RHYTHM","OXYGEN EST.","BP ESTIMATE","STEPS","CPU TEMP"].map(function(n){
         return '<div class="row">'+n+'</div>';
       }).join("");
 

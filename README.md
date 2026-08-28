@@ -27,7 +27,7 @@ Requires Android SDK 35 and JDK 17 or newer.
 ```powershell
 .\build.bat
 adb install -r app\build\outputs\apk\debug\app-debug.apk
-adb shell pm grant ai.nolee.canvas android.permission.BODY_SENSORS
+adb shell pm grant ai.nolee.demo android.permission.BODY_SENSORS
 ```
 
 Select `Nolee Demo` as the primary app in Nolee Launcher before starting kiosk. The app declares

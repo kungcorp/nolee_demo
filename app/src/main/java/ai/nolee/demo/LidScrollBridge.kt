@@ -1,4 +1,4 @@
-package ai.nolee.canvas
+package ai.nolee.demo
 
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -66,7 +66,7 @@ class LidScrollBridge(
 
     private companion object {
         val STATE_URI: Uri = Uri.parse("content://io.kungcorp.nolee.launcher.state")
-        const val ACTION = "ai.nolee.canvas.LID_STEP"
+        const val ACTION = "ai.nolee.demo.LID_STEP"
     }
 }
 
