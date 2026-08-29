@@ -2,6 +2,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.BODY_SENSORS" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!--
+      Needed to enter health measurement mode; without it the vitals card reports "needs
+      permission" on every metric. NOT a root permission: it carries Android's `development`
+      flag, so declaring it here is enough to be granted it over adb.
+
+          adb shell pm grant ai.nolee.demo android.permission.WRITE_SECURE_SETTINGS
+    -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
 
     <queries>
         <provider android:authorities="io.kungcorp.nolee.launcher.state" />

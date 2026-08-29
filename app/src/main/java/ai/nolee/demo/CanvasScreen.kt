@@ -6,6 +6,9 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -16,8 +19,8 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,7 +46,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Canvas as GraphicsCanvas
@@ -54,9 +59,12 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -67,6 +75,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -75,6 +84,9 @@ import kotlin.random.Random
 
 private val WarmBackground = Color(0xFFEADBD4)
 private val Ink = Color(0xFF433139)
+
+/** The live-instrument accent: the SENSORS dot, and every acquiring animation. */
+private val Accent = Color(0xFFE26D87)
 private val Cream = Color(0xFFFFF6EE)
 private val Pink = Color(0xFFF39AB5)
 private val Amber = Color(0xFFF3BD6C)
@@ -120,29 +132,52 @@ fun CanvasScreen(
     pulseGeneration: Int,
     sensors: SensorSnapshot,
     thermal: LauncherThermal.Reading?,
+    vitals: VitalsState,
+    selectedVital: Vital,
     budget: LauncherThermal.Budget,
     forceSensors: Boolean,
     ownerControls: Boolean,
     status: String,
     onStep: (Int) -> Unit,
+    onVitalStep: (Int) -> Unit,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
     onCloseOwnerControls: () -> Unit,
     onExitKiosk: () -> Unit,
 ) {
-    var drag by remember { mutableFloatStateOf(0f) }
+    // Tracked per axis: vertical moves between scenes, horizontal between the three vitals.
+    var dragX by remember { mutableFloatStateOf(0f) }
+    var dragY by remember { mutableFloatStateOf(0f) }
+    val readingsVisible = scene == 2 || forceSensors
+    // The one measured value the rest of the screen uses. Null until a measurement has produced
+    // it — the orb and the header both fall back to a resting rate rather than inventing one.
+    val heartRate = (vitals[Vital.HEART] as? Reading.Value)?.value
     Box(
         Modifier
             .fillMaxSize()
             .background(WarmBackground)
-            .pointerInput(Unit) {
-                detectVerticalDragGestures(
-                    onVerticalDrag = { _, amount -> drag += amount },
-                    onDragEnd = {
-                        if (drag < -36f) onStep(1) else if (drag > 36f) onStep(-1)
-                        drag = 0f
+            // ⚠️ One detector, not two. Separate vertical and horizontal `pointerInput` blocks
+            // both claim the same pointer and the second never sees a clean gesture; routing on
+            // the dominant axis at drag end is what makes both directions reliable.
+            .pointerInput(readingsVisible) {
+                detectDragGestures(
+                    onDrag = { _, amount ->
+                        dragX += amount.x
+                        dragY += amount.y
                     },
-                    onDragCancel = { drag = 0f },
+                    onDragEnd = {
+                        if (abs(dragY) >= abs(dragX)) {
+                            if (dragY < -36f) onStep(1) else if (dragY > 36f) onStep(-1)
+                        } else if (readingsVisible) {
+                            if (dragX < -36f) onVitalStep(1) else if (dragX > 36f) onVitalStep(-1)
+                        }
+                        dragX = 0f
+                        dragY = 0f
+                    },
+                    onDragCancel = {
+                        dragX = 0f
+                        dragY = 0f
+                    },
                 )
             }
             .pointerInput(Unit) {
@@ -154,17 +189,19 @@ fun CanvasScreen(
             compositionShift = compositionShift,
             rotationSector = rotationSector,
             pulseGeneration = pulseGeneration,
-            heartRate = sensors.heartRate,
+            heartRate = heartRate,
             rollX = sensors.rollX,
             rollY = sensors.rollY,
             budget = budget,
         )
-        Header(scene, sensors.heartRate)
+        Header(scene, heartRate)
         SceneWords(scene, sceneDirection)
         SensorPanel(
-            visible = scene == 2 || forceSensors,
+            visible = readingsVisible,
             snapshot = sensors,
             thermal = thermal,
+            vitals = vitals,
+            selected = selectedVital,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(bottom = SensorCardBottomInset),
@@ -304,6 +341,8 @@ private fun SensorPanel(
     visible: Boolean,
     snapshot: SensorSnapshot,
     thermal: LauncherThermal.Reading?,
+    vitals: VitalsState,
+    selected: Vital,
     modifier: Modifier = Modifier,
 ) {
     // The card's nearest edge is the bottom curve, so that depth governs how far in its side sits.
@@ -325,41 +364,71 @@ private fun SensorPanel(
                     maxLines = 1,
                 )
                 Spacer(Modifier.width(6.dp))
-                Box(Modifier.size(6.dp).background(Color(0xFFE26D87), CircleShape))
+                Box(Modifier.size(6.dp).background(Accent, CircleShape))
             }
+            Spacer(Modifier.height(6.dp))
+            // One vital per page. Without this there is no clue that swiping does anything.
+            PageIndicator(selected)
+            Spacer(Modifier.height(10.dp))
+
+            // The measured vital: its own heading, its own reading, its own acquiring animation.
+            VitalMetric(selected, vitals[selected])
+            Spacer(Modifier.height(SensorMetricGap))
+            Metric("LAST CHECK", lastCheck(vitals[selected]), null)
+
+            Spacer(Modifier.height(10.dp))
+            // Device state rather than a measured vital, so it sits below the rule on every page.
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(Ink.copy(alpha = .22f)),
+            )
             Spacer(Modifier.height(9.dp))
-            // One column, stacked: the card should read as a portrait instrument strip.
-            Metric(
-                "HEART RHYTHM",
-                snapshot.heartRate?.toString() ?: "acquiring",
-                "bpm".takeIf { snapshot.heartRate != null },
-            )
-            Spacer(Modifier.height(SensorMetricGap))
-            Metric(
-                "OXYGEN EST.",
-                snapshot.oxygen?.toString() ?: "acquiring",
-                "%".takeIf { snapshot.oxygen != null },
-            )
-            Spacer(Modifier.height(SensorMetricGap))
-            Metric(
-                "BP ESTIMATE",
-                if (snapshot.systolic != null && snapshot.diastolic != null) {
-                    "${snapshot.systolic}/${snapshot.diastolic}"
-                } else {
-                    "acquiring"
-                },
-                "mmHg".takeIf { snapshot.systolic != null && snapshot.diastolic != null },
-            )
-            Spacer(Modifier.height(SensorMetricGap))
             Metric("STEPS", snapshot.steps?.toString() ?: "waiting", null)
             Spacer(Modifier.height(SensorMetricGap))
             // Not a sensor the app owns — this one comes from the Launcher, and it is the number
             // the animation throttles itself against.
             Metric(
-                "CPU TEMP",
-                thermal?.cpu?.let { "%.0f".format(it) } ?: "no reading",
-                "°C".takeIf { thermal?.cpu != null },
+                "SOC TEMP",
+                thermal?.soc?.let { "%.0f".format(it) } ?: "no reading",
+                "°C".takeIf { thermal?.soc != null },
             )
+        }
+    }
+}
+
+/** Which of the three vital pages is showing, and that there are three. */
+@Composable
+private fun PageIndicator(selected: Vital) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Vital.values().forEach { vital ->
+            val here = vital == selected
+            Box(
+                Modifier
+                    .width(if (here) 14.dp else 6.dp)
+                    .height(3.dp)
+                    .background(
+                        if (here) Accent else Ink.copy(alpha = .28f),
+                        RoundedCornerShape(1.5.dp),
+                    ),
+            )
+            Spacer(Modifier.width(4.dp))
+        }
+    }
+}
+
+/** The age of the shown vital, or what it is doing instead of having one. */
+private fun lastCheck(reading: Reading): String = when (reading) {
+    is Reading.Acquiring -> "measuring"
+    is Reading.Pending -> "never"
+    is Reading.Failed -> reading.reason
+    is Reading.Value -> {
+        val age = reading.ageSeconds()
+        when {
+            age < 60 -> "${age}s ago"
+            age < 3600 -> "${age / 60}m ago"
+            else -> "${age / 3600}h ago"
         }
     }
 }
@@ -374,38 +443,219 @@ private val SensorCardEndInset = 10.dp
 @Composable
 private fun Metric(label: String, value: String, unit: String?, modifier: Modifier = Modifier) {
     Column(modifier) {
+        MetricLabel(label)
+        Spacer(Modifier.height(3.dp))
+        MetricValue(value, unit)
+    }
+}
+
+/**
+ * One measured vital: its reading, or an animation in its place while it is being taken.
+ *
+ * The animation is not decoration. A metric takes 30 seconds and produces nothing until it lands,
+ * so a static "--" for half a minute is indistinguishable from a hang.
+ */
+@Composable
+private fun VitalMetric(vital: Vital, reading: Reading, modifier: Modifier = Modifier) {
+    Column(modifier) {
         Text(
-            label,
-            color = Ink.copy(alpha = .72f),
-            fontSize = instrumentSp(11f),
-            lineHeight = instrumentSp(13.5f),
-            letterSpacing = .45.sp,
+            vital.label,
+            color = Ink.copy(alpha = .85f),
+            fontSize = instrumentSp(12f),
+            lineHeight = instrumentSp(14.5f),
+            letterSpacing = .5.sp,
+            fontWeight = FontWeight.Medium,
             maxLines = 1,
         )
-        Spacer(Modifier.height(3.dp))
-        // The unit rides the reading's baseline at a smaller size: "138/82 mmHg" at full size does
-        // not fit a column, and the number is what should be read first anyway.
-        Row(verticalAlignment = Alignment.Bottom) {
+        Spacer(Modifier.height(5.dp))
+        when (reading) {
+            is Reading.Acquiring -> Acquiring(vital)
+            is Reading.Pending -> MetricValue("--", null)
+            // Prose, not a number - kept at reading size so it wraps rather than clips.
+            is Reading.Failed -> MetricValue(reading.reason, null)
+            is Reading.Value -> MetricValue(
+                reading.second?.let { "${reading.value}/$it" } ?: reading.value.toString(),
+                vital.unit,
+            )
+        }
+    }
+}
+
+/**
+ * The acquiring animation, one per metric.
+ *
+ * Each takes the motion of the thing being measured - a trace for the heartbeat, a filling level
+ * for saturation, an inflating cuff for pressure - so the page is identifiable at a glance without
+ * reading its heading.
+ */
+@Composable
+private fun Acquiring(vital: Vital) {
+    val cycleMillis = when (vital) {
+        Vital.HEART -> 1_100
+        Vital.OXYGEN -> 2_600
+        Vital.PRESSURE -> 2_400
+    }
+    val phase by rememberInfiniteTransition(label = "acquiring").animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(cycleMillis, easing = LinearEasing)),
+        label = vital.name,
+    )
+    val height = with(LocalDensity.current) { instrumentSp(18f).toDp() }
+    Canvas(Modifier.fillMaxWidth().height(height)) {
+        when (vital) {
+            Vital.HEART -> drawHeartbeat(phase)
+            Vital.OXYGEN -> drawSaturation(phase)
+            Vital.PRESSURE -> drawCuff(phase)
+        }
+    }
+}
+
+private const val Tau = 6.2831855f
+
+/** A normalised ECG complex: x across the row, y as a fraction of the amplitude. */
+private val EcgTrace = listOf(
+    0f to 0f, .26f to 0f,
+    .32f to .16f, .38f to 0f,          // P
+    .46f to 0f,
+    .50f to -.20f,                     // Q
+    .56f to 1f,                        // R
+    .62f to -.48f,                     // S
+    .68f to 0f,
+    .77f to .30f, .86f to 0f,          // T
+    1f to 0f,
+)
+
+/** The trace height at any x, so the sweep head rides the line rather than floating over it. */
+private fun ecgAt(x: Float): Float {
+    for (k in 0 until EcgTrace.size - 1) {
+        val (x0, y0) = EcgTrace[k]
+        val (x1, y1) = EcgTrace[k + 1]
+        if (x in x0..x1) {
+            val t = if (x1 == x0) 0f else (x - x0) / (x1 - x0)
+            return y0 + (y1 - y0) * t
+        }
+    }
+    return 0f
+}
+
+/** The trace, lit by a sweep running left to right and fading behind itself. */
+private fun DrawScope.drawHeartbeat(phase: Float) {
+    val mid = size.height / 2f
+    val amplitude = size.height * .36f
+    for (k in 0 until EcgTrace.size - 1) {
+        val (x0, y0) = EcgTrace[k]
+        val (x1, y1) = EcgTrace[k + 1]
+        // How far this segment sits behind the sweep, wrapped into 0..1.
+        val behind = ((phase - x1) + 1f) % 1f
+        val lit = (1f - behind / .5f).coerceIn(0f, 1f)
+        drawLine(
+            color = Accent.copy(alpha = .13f + .87f * lit),
+            start = Offset(x0 * size.width, mid - y0 * amplitude),
+            end = Offset(x1 * size.width, mid - y1 * amplitude),
+            strokeWidth = size.height * .085f,
+            cap = StrokeCap.Round,
+        )
+    }
+    drawCircle(Accent, size.height * .09f, Offset(phase * size.width, mid - ecgAt(phase) * amplitude))
+}
+
+/** A level rising and falling behind glass - saturation, not a progress bar. */
+private fun DrawScope.drawSaturation(phase: Float) {
+    val radius = size.height * .46f
+    val centre = Offset(radius + size.height * .04f, size.height / 2f)
+    drawCircle(Accent.copy(alpha = .20f), radius, centre, style = Stroke(size.height * .075f))
+
+    val level = .26f + .5f * (.5f - .5f * cos(phase * Tau))
+    val surface = centre.y + radius - 2f * radius * level
+    val disc = Path().apply {
+        addOval(Rect(centre.x - radius, centre.y - radius, centre.x + radius, centre.y + radius))
+    }
+    clipPath(disc) {
+        val liquid = Path().apply {
+            moveTo(centre.x - radius, surface)
+            // Two crests drifting sideways, so the surface reads as liquid, not a fill line.
+            var x = centre.x - radius
+            while (x <= centre.x + radius) {
+                val t = (x - (centre.x - radius)) / (2f * radius)
+                lineTo(x, surface + sin((t * 2f + phase) * Tau) * size.height * .045f)
+                x += radius / 8f
+            }
+            lineTo(centre.x + radius, centre.y + radius)
+            lineTo(centre.x - radius, centre.y + radius)
+            close()
+        }
+        drawPath(liquid, Accent.copy(alpha = .8f))
+    }
+}
+
+/** A cuff: pumped up quickly, bled off slowly, then a beat of rest. */
+private fun DrawScope.drawCuff(phase: Float) {
+    val barHeight = size.height * .34f
+    val barWidth = size.width * .78f
+    val top = (size.height - barHeight) / 2f
+    val corner = CornerRadius(barHeight / 2f, barHeight / 2f)
+    drawRoundRect(Accent.copy(alpha = .16f), Offset(0f, top), Size(barWidth, barHeight), corner)
+    val level = when {
+        // Inflate: fast, easing out as it reaches pressure.
+        phase < .18f -> (phase / .18f).let { 1f - (1f - it) * (1f - it) }
+        // Bleed: slow and linear, which is what makes it read as a cuff and not a download bar.
+        phase < .86f -> 1f - (phase - .18f) / .68f
+        else -> 0f
+    }.coerceIn(0f, 1f)
+    if (level > .01f) {
+        drawRoundRect(Accent, Offset(0f, top), Size(barWidth * level, barHeight), corner)
+    }
+    // Gradations, cut out of the bar so it reads as a scale.
+    for (k in 1..3) {
+        val x = barWidth * k / 4f
+        drawLine(
+            color = WarmBackground.copy(alpha = .6f),
+            start = Offset(x, top + barHeight * .16f),
+            end = Offset(x, top + barHeight * .84f),
+            strokeWidth = size.height * .035f,
+        )
+    }
+}
+
+@Composable
+private fun MetricLabel(text: String) {
+    Text(
+        text,
+        color = Ink.copy(alpha = .72f),
+        fontSize = instrumentSp(11f),
+        lineHeight = instrumentSp(13.5f),
+        letterSpacing = .45.sp,
+        maxLines = 1,
+    )
+}
+
+/**
+ * The unit rides the reading's baseline at a smaller size: "138/82 mmHg" at full size does not fit
+ * a column, and the number is what should be read first anyway.
+ */
+@Composable
+private fun MetricValue(value: String, unit: String?) {
+    Row(verticalAlignment = Alignment.Bottom) {
+        Text(
+            value,
+            color = Ink,
+            fontSize = instrumentSp(15f),
+            lineHeight = instrumentSp(18f),
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            modifier = Modifier.alignByBaseline(),
+        )
+        if (unit != null) {
+            Spacer(Modifier.width(2.dp))
             Text(
-                value,
-                color = Ink,
-                fontSize = instrumentSp(15f),
-                lineHeight = instrumentSp(18f),
-                fontWeight = FontWeight.Medium,
+                unit,
+                color = Ink.copy(alpha = .72f),
+                fontSize = instrumentSp(8f),
+                lineHeight = instrumentSp(10f),
                 maxLines = 1,
                 modifier = Modifier.alignByBaseline(),
             )
-            if (unit != null) {
-                Spacer(Modifier.width(2.dp))
-                Text(
-                    unit,
-                    color = Ink.copy(alpha = .72f),
-                    fontSize = instrumentSp(8f),
-                    lineHeight = instrumentSp(10f),
-                    maxLines = 1,
-                    modifier = Modifier.alignByBaseline(),
-                )
-            }
         }
     }
 }

@@ -20,15 +20,15 @@ object LauncherThermal {
 
     private val STATE_URI: Uri = Uri.parse("content://io.kungcorp.nolee.launcher.state")
 
-    data class Reading(val cpu: Float?, val skin: Float?, val source: String)
+    data class Reading(val soc: Float?, val board: Float?, val source: String)
 
     /** **Blocking** — the Launcher shells out to read the zones. Never call on the main thread. */
     fun read(context: Context): Reading? = runCatching {
         val out = context.contentResolver.call(STATE_URI, "thermal", null, null) ?: return null
         if (!out.getBoolean("ok", false)) return null
         Reading(
-            cpu = if (out.containsKey("cpu_c")) out.getFloat("cpu_c") else null,
-            skin = if (out.containsKey("skin_c")) out.getFloat("skin_c") else null,
+            soc = if (out.containsKey("soc_c")) out.getFloat("soc_c") else null,
+            board = if (out.containsKey("board_c")) out.getFloat("board_c") else null,
             source = out.getString("thermal_source") ?: "unknown",
         )
     }.getOrNull()
@@ -36,10 +36,14 @@ object LauncherThermal {
     /**
      * How hard this particular app is willing to work at a given temperature.
      *
-     * These numbers are ours, not the platform's. They were picked against measurements of *this*
-     * animation on a DevKit Ultra: idle sat near 43 °C, this scene sustained ~50 °C, and the
-     * pre-optimisation build reached ~58 °C. So [WARM] starts above what the tuned build produces
-     * and [HOT] above what the untuned one did. Copy the shape, not the constants.
+     * Calibrated 2026-08-29 against a worn probe run (E122), not guessed. Across 275 samples from a
+     * fanned-cold start to full load, `skin` tracked `cpu` as **skin ≈ 0.68 × cpu + 24.3** (R² 0.98),
+     * and the wearer's own boundaries were: comfortable up to skin 60, warm 60–70, hot beyond 70,
+     * with "keep a worn app under skin 68" as their design guidance.
+     *
+     * So [WARM] is cpu 52 (≈ skin 60, where comfortable ends) and [HOT] is cpu 64 (≈ skin 68, the
+     * worn ceiling). Copy the method, not the constants: these are one wearer, one room, one
+     * device, and your app's own load profile will differ.
      *
      * ⚠️ **Decide whether your app is worn or docked before choosing limits.** This demo throttles
      * on [Reading.cpu], because it is a showcase that runs on a bench as often as on a wrist and
@@ -60,9 +64,9 @@ object LauncherThermal {
 
         companion object {
             /** Absent readings return [FULL]: never let a failed read look like a cool device. */
-            fun forCpu(celsius: Float?): Budget = when {
+            fun forSoc(celsius: Float?): Budget = when {
                 celsius == null -> FULL
-                celsius >= 58f -> HOT
+                celsius >= 64f -> HOT
                 celsius >= 52f -> WARM
                 else -> FULL
             }

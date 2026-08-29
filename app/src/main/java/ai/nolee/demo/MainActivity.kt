@@ -50,6 +50,12 @@ class MainActivity : ComponentActivity() {
     private var bodyPermission by mutableStateOf(false)
     private var budget by mutableStateOf(LauncherThermal.Budget.FULL)
     private var thermal by mutableStateOf<LauncherThermal.Reading?>(null)
+    private var vitals by mutableStateOf(VitalsState())
+    /** Which of the three vital pages is showing. Only this one is ever measured. */
+    private var selectedVital by mutableStateOf(Vital.HEART)
+    private lateinit var vitalsSequencer: VitalsSequencer
+    /** Measuring must stop when we leave the front — otherwise the PPG LEDs stay lit. */
+    private var resumed by mutableStateOf(false)
 
     private var sideDownAt = 0L
     private var sideHeld = false
@@ -97,6 +103,7 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         hideSystemBars()
 
+        vitalsSequencer = VitalsSequencer(this) { next -> runOnUiThread { vitals = next } }
         sensors = NoleeSensors(this) { next ->
             runOnUiThread {
                 reactToSteps(next.steps)
@@ -114,17 +121,22 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 BackHandler(enabled = ownerControls) { ownerControls = false }
-                // The optical sensors run only while their readings are on screen. Values already
-                // taken stay in the snapshot, so the header keeps the last heart rate it measured.
-                LaunchedEffect(scene, forceSensors, bodyPermission) {
-                    sensors.setBodySensors(bodyPermission && (scene == 2 || forceSensors))
-                }
                 // Watch our own heat and back off before the device gets uncomfortable. The
                 // thresholds are this app's, measured against this animation — the platform
                 // publishes numbers, not a verdict. See LauncherThermal.Budget.
                 // Keyed on visibility, so arriving at the readings takes a fresh sample rather than
                 // showing whatever the throttle loop last happened to fetch.
                 val readingsVisible = scene == 2 || forceSensors
+                // ⚠️ Measured, not polled, and only the metric on screen. Each needs its own 30 s
+                // window and they cannot be combined, so measuring all three would cost 90 s to
+                // reach the one you actually wanted. Swiping to a page measures that page.
+                //
+                // Keyed on `resumed` as well as visibility so that leaving the app cancels the
+                // cycle. That cancellation is what turns the PPG LEDs back off.
+                LaunchedEffect(readingsVisible, bodyPermission, resumed, selectedVital) {
+                    if (!readingsVisible || !bodyPermission || !resumed) return@LaunchedEffect
+                    vitalsSequencer.measureIfStale(selectedVital)
+                }
                 LaunchedEffect(readingsVisible) {
                     val gap = if (readingsVisible) {
                         LauncherThermal.POLL_SECONDS_VISIBLE
@@ -134,10 +146,10 @@ class MainActivity : ComponentActivity() {
                     while (true) {
                         val reading = withContext(Dispatchers.IO) { LauncherThermal.read(this@MainActivity) }
                         thermal = reading
-                        val next = LauncherThermal.Budget.forCpu(reading?.cpu)
+                        val next = LauncherThermal.Budget.forSoc(reading?.soc)
                         if (next != budget) {
                             budget = next
-                            status = "THERMAL · ${next.name} / ${reading?.cpu?.roundToInt()}°C CPU"
+                            status = "THERMAL · ${next.name} / ${reading?.soc?.roundToInt()}°C CPU"
                         }
                         delay(gap * 1000)
                     }
@@ -150,6 +162,8 @@ class MainActivity : ComponentActivity() {
                     pulseGeneration = pulseGeneration,
                     sensors = snapshot,
                     thermal = thermal,
+                    vitals = vitals,
+                    selectedVital = selectedVital,
                     budget = budget,
                     forceSensors = forceSensors,
                     ownerControls = ownerControls,
@@ -157,6 +171,12 @@ class MainActivity : ComponentActivity() {
                     onStep = { direction ->
                         changeScene(direction)
                         status = if (direction > 0) "TOUCH · NEXT SCENE" else "TOUCH · PREVIOUS SCENE"
+                    },
+                    onVitalStep = { direction ->
+                        val all = Vital.values()
+                        val next = all[(selectedVital.ordinal + direction + all.size) % all.size]
+                        selectedVital = next
+                        status = "SENSOR · ${next.label}"
                     },
                     onTap = ::pulseMatter,
                     onLongPress = {
@@ -176,12 +196,14 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         hideSystemBars()
         bodyPermission = hasBodySensorPermission()
+        resumed = true
         sensors.start()
         val error = lidScroll.start()
         if (error != null) status = "LID BRIDGE · $error"
     }
 
     override fun onPause() {
+        resumed = false
         lidScroll.stop()
         sensors.stop()
         super.onPause()

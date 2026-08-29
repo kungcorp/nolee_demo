@@ -14,8 +14,11 @@ Android APIs plus the public Nolee Launcher contract—never root and never a ma
 - Side-button short shifts the composition, double moves to the next scene, triple opens live
   sensors, and long reveals owner controls plus the tested rounded-display safe zone.
 - Heart rate controls breathing speed, accelerometer tilt rolls the form across the glass the way a
-  ball would, and steps pulse it and advance the scene. SpO2 and blood-pressure estimates appear in
-  the matching sensor HUD.
+  ball would, and steps pulse it and advance the scene.
+- Heart rate, blood oxygen and blood pressure are **measured**, not polled, and only one at a time:
+  the sensor card runs a 30-second window per metric and animates whichever one is live. See
+  `Vitals.kt` — the recipe is not obvious and getting it wrong returns a frozen number that looks
+  real.
 
 Touch dragging and long-pressing the display provide desktop/emulator fallbacks for the lid scroll
 and owner controls.
@@ -28,14 +31,21 @@ Requires Android SDK 35 and JDK 17 or newer.
 .\build.bat
 adb install -r app\build\outputs\apk\debug\app-debug.apk
 adb shell pm grant ai.nolee.demo android.permission.BODY_SENSORS
+adb shell pm grant ai.nolee.demo android.permission.WRITE_SECURE_SETTINGS
 ```
+
+⚠️ **Both grants are required.** Without `WRITE_SECURE_SETTINGS` the device cannot be put into
+health measurement mode and all three vitals report `needs permission`. It is not a root
+permission — it carries Android's `development` flag, which is what makes `pm grant` work on an
+ordinary app.
 
 Select `Nolee Demo` as the primary app in Nolee Launcher before starting kiosk. The app declares
 `CATEGORY_HOME`, so the power button retains the platform's expected kiosk sleep/home behavior.
 
 The source is deliberately compact: `MainActivity.kt` is the physical-control map,
-`LidScrollBridge.kt` is the copyable no-root scroll registration, and `NoleeSensors.kt` shows the
-correct sensor names, indices, and Android units.
+`LidScrollBridge.kt` is the copyable no-root scroll registration, `NoleeSensors.kt` shows the
+correct sensor names, indices, and Android units for motion and steps, and `Vitals.kt` is the full
+heart-rate / blood-oxygen / blood-pressure measurement sequence.
 
 ## Laying out on the lens
 

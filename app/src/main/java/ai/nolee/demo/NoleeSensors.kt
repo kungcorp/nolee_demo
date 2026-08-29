@@ -10,10 +10,6 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 data class SensorSnapshot(
-    val heartRate: Int? = null,
-    val oxygen: Int? = null,
-    val systolic: Int? = null,
-    val diastolic: Int? = null,
     val steps: Int? = null,
     val tiltDegrees: Float = 0f,
     /** In-plane gravity, -1..1, as the screen sees it: +x is right, +y is down. */
@@ -28,24 +24,18 @@ class NoleeSensors(
     private val manager = context.getSystemService(SensorManager::class.java)
     private var current = SensorSnapshot()
     private val all by lazy { manager.getSensorList(Sensor.TYPE_ALL) }
-    private val bodySensors by lazy {
-        listOf("android.sensor.heart_rate", "android.sensor.spo2", "android.sensor.vp")
-            .mapNotNull(::sensor)
-    }
-
-    private var wantBody = false
-    private var bodyRegistered = false
 
     /**
-     * Motion and steps run for as long as the app is in front; the optical sensors do not.
+     * Motion and steps only — the optical sensors are not this class's business.
      *
-     * Registering heart rate / SpO2 / VP drives the PPG LEDs continuously — off-wrist they keep
-     * streaming zeros rather than idling — so they are a standing power and heat cost. Call
-     * [setBodySensors] to switch them on only while their readings are actually on screen.
+     * ⚠️ Heart rate, SpO2 and blood pressure are **not** readable this way. Registering
+     * `heart_rate` / `spo2` / `vp` and reading their values returns a stale constant republished at
+     * roughly 3 Hz, which is indistinguishable from a live reading and is not one. They need
+     * measurement mode, they can only be taken one at a time, and [VitalsSequencer] owns all of
+     * that — including switching the PPG LEDs off again afterwards.
      */
     fun start() {
         manager.unregisterListener(this)
-        bodyRegistered = false
         sensor("android.sensor.accelerometer")?.let {
             // UI rate is ample: the roll is spring-smoothed, and GAME rate only added noise wakeups.
             manager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
@@ -53,29 +43,10 @@ class NoleeSensors(
         sensor("android.sensor.step_counter")?.let {
             manager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
         }
-        applyBody()
-    }
-
-    fun setBodySensors(enabled: Boolean) {
-        wantBody = enabled
-        applyBody()
     }
 
     fun stop() {
         manager.unregisterListener(this)
-        bodyRegistered = false
-    }
-
-    private fun applyBody() {
-        if (wantBody == bodyRegistered) return
-        bodyRegistered = wantBody
-        bodySensors.forEach {
-            if (wantBody) {
-                manager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
-            } else {
-                manager.unregisterListener(this, it)
-            }
-        }
     }
 
     override fun onSensorChanged(event: SensorEvent) {
@@ -103,18 +74,6 @@ class NoleeSensors(
             "android.sensor.step_counter" -> current.copy(
                 steps = event.values.getOrNull(0)?.takeIf { it >= 0f }?.toInt() ?: current.steps,
             )
-            // values[0] is wear status, not the reading, and off-wrist every reading is 0. Keep the
-            // last real measurement instead of letting a zero wipe the display back to "acquiring".
-            "android.sensor.heart_rate" -> current.copy(
-                heartRate = reading(event, 1) ?: current.heartRate,
-            )
-            "android.sensor.spo2" -> current.copy(
-                oxygen = reading(event, 1) ?: current.oxygen,
-            )
-            "android.sensor.vp" -> current.copy(
-                systolic = reading(event, 3) ?: current.systolic,
-                diastolic = reading(event, 4) ?: current.diastolic,
-            )
             else -> current
         }
         if (next == current) return
@@ -123,9 +82,6 @@ class NoleeSensors(
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
-
-    private fun reading(event: SensorEvent, index: Int): Int? =
-        event.values.getOrNull(index)?.takeIf { it > 0f }?.toInt()
 
     private fun sensor(stringType: String): Sensor? = all.firstOrNull { it.stringType == stringType }
 
